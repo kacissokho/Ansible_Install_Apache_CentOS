@@ -3,10 +3,49 @@
   become: true
   vars:
     system_user: admin
-  vars_files:
-    - files/secrets/credentials.yml
+    ansible_sudo_pass: admin
+
   pre_tasks:
     - name: create www-data
-      user: name=www-data state=present
+      user:
+        name: www-data
+        state: present
+
+    # Vérifie si "docker compose" (v2) est dispo
+    - name: Check for Docker Compose v2
+      command: docker compose version
+      register: compose_v2
+      changed_when: false
+      failed_when: false
+
+    # Vérifie s'il existe déjà un binaire docker-compose v1
+    - name: Check for docker-compose v1 binary
+      stat:
+        path: /usr/local/bin/docker-compose
+      register: dc_v1
+
+    # Crée un wrapper /usr/local/bin/docker-compose -> "docker compose"
+    - name: Create docker-compose wrapper (calls docker compose)
+      copy:
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+        content: |
+          #!/bin/sh
+          exec docker compose "$@"
+      when:
+        - compose_v2.rc == 0
+        - not dc_v1.stat.exists
+
+    # Si ni v1 ni v2 présents, on échoue avec un message clair
+    - name: Fail if Compose is not installed
+      fail:
+        msg: >-
+          Ni docker-compose v1 (/usr/local/bin/docker-compose) ni docker compose v2 ne sont installés.
+          Installe le plugin v2 (paquet docker-compose-plugin) ou le binaire v1, puis relance le play.
+      when:
+        - compose_v2.rc != 0
+        - not dc_v1.stat.exists
+
   roles:
     - { role: ansible-role-containerized-wordpress }
+
